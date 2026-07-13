@@ -1,6 +1,11 @@
-mod parse_time;
+mod time;
+mod schedule;
 
-use crate::parse_time::{parse_relative_time, ScheduleTime};
+use std::{fmt::write, result};
+
+use chrono::Local;
+use time::{ScheduleTime, parse_relative_time};
+use schedule::{write_to_rtc};
 use clap::{Parser, Subcommand};
 use anyhow::{Context};
 
@@ -13,6 +18,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Schedule a one-time or repeating wake event
     Schedule {
         time: String 
     }
@@ -21,20 +27,20 @@ enum Commands {
 
 fn main() -> anyhow::Result<()> {
     let cli_inputs = Cli::parse();
+
+    // println!("{:?}", cli_inputs.command);
     
     match cli_inputs.command {
         Commands::Schedule { time } => {
             let parsed_time = parse_relative_time(&time)
-                .context("Parsing time failed")?;
+                .context("Parsing time failed")?
+                .to_datetime(chrono::Utc::now());
 
-            match parsed_time {
-                ScheduleTime::Relative(rel_time) => {
-                    println!("{}", rel_time);
-                }
-                ScheduleTime::Absolute(abs_time) => {
-                    println!("{}", abs_time);
-                }
-            }
+            // println!("{}", parsed_time.with_timezone(&Local).format("%m/%d/%Y at %H:%M"));
+            // println!("{}", ScheduleTime::Absolute(chrono::Utc::now()).to_datetime(chrono::Utc::now()));
+
+            let write_result = write_to_rtc(parsed_time).context("Error writing to rtc")?;
+            println!("{:?}", write_result);
 
             Ok(())
         }
