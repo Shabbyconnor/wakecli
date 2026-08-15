@@ -28,6 +28,21 @@ pub enum EventKind {
     },
 }
 
+impl Schedule {
+    fn push_schedule(&self) -> anyhow::Result<()>{
+        
+        let schedule_string_conversion = toml::to_string(self)
+            .context("Schedule conversion to string failed {}")?;
+
+        std::fs::write(SCHEDULES_FILE, schedule_string_conversion)
+            .context("Write schedule string to file failed {}")?;
+
+        Ok(())
+    }
+}
+
+
+
 pub fn add_to_schedule(event_in: Event) -> anyhow::Result<()> {
     
     let mut current_schedule: Schedule = retrieve_saved_schedule()?;
@@ -36,13 +51,7 @@ pub fn add_to_schedule(event_in: Event) -> anyhow::Result<()> {
     current_schedule.events.retain(|event| event.id != event_in.id);
     current_schedule.events.push(event_in);
 
-    let schedule_string_conversion = toml::to_string(&current_schedule)
-        .context("Schedule conversion to string failed {}")?;
-
-    std::fs::write(SCHEDULES_FILE, schedule_string_conversion)
-        .context("Write schedule string to file failed {}")?;
-
-    Ok(())
+    current_schedule.push_schedule()
 }
 
 pub fn retrieve_saved_schedule() -> anyhow::Result<Schedule> {
@@ -57,6 +66,27 @@ pub fn retrieve_saved_schedule() -> anyhow::Result<Schedule> {
     }
 
 
+}
+
+pub fn check_schedule() -> anyhow::Result<()> {
+    if wakealarm_exists().is_err() {
+        bail!("Cannot check schedules. Unable to confirm files exist")
+    }
+ 
+    let mut current_schedule = retrieve_saved_schedule()?;
+
+    current_schedule.events
+        .retain_mut(|event| {
+            // Remove all one time events that have already passed
+            match event.kind {
+                EventKind::Once(datetime) => {
+                    datetime > Utc::now()
+                },
+                _ => true
+            }
+        });
+
+    current_schedule.push_schedule()
 }
 
 pub fn write_to_rtc(scheduled_datetime: DateTime<Utc>) -> anyhow::Result<String> {

@@ -11,7 +11,7 @@ use anyhow::{Context, bail};
 use constcat::concat;
 use toml::value::Datetime;
 
-use crate::schedule::{Event, EventKind, add_to_schedule, retrieve_saved_schedule, get_unused_id};
+use crate::schedule::{Event, EventKind, add_to_schedule, check_schedule, get_unused_id, retrieve_saved_schedule};
 
 
 #[derive(Parser)]
@@ -32,7 +32,8 @@ enum Commands {
     Cancel {
         #[arg(short = 'n', long = "next")]
         cancel_next: bool
-    }
+    },
+    Temp 
 }
 
 const CONFIG_FILE: &str = "/etc/wakectl.toml";
@@ -118,6 +119,9 @@ fn main() -> anyhow::Result<()> {
                 // Show alarm options
             }
             Ok(())
+        },
+        Commands::Temp => {
+            check_schedule()
         }
     }
 }
