@@ -80,28 +80,34 @@ fn main() -> anyhow::Result<()> {
     
     match cli_inputs.command {
         Commands::Schedule { time, date} => {
+            let parsed_time: ScheduleTime;
+
             match date {
                 Some(date) => {
                     // Absolute Time - Provided Date
-                    let parsed_time = parse_absolute_time(&time, &date)
-                        .context("Parsing time failed")?
-                        .to_datetime(chrono::Utc::now());
+                    parsed_time = parse_absolute_time(&time, &date)
+                        .context("Parsing time failed")?;
                 },
                 None => {
                     if time.contains("+") {
-                        let parsed_time = parse_relative_time(&time)
-                            .context("Parsing Relative Time Failed")?
-                            .to_datetime(chrono::Utc::now());
+                        parsed_time = parse_relative_time(&time)
+                            .context("Parsing Relative Time Failed")?;
                     } else {
                         // Parse Next Occurence
-                        let parsed_time = parse_time_of_day(&time)
-                            .context("Parsing Time Of Day Failed")?
-                            .to_datetime(chrono::Utc::now());
+                        parsed_time = parse_time_of_day(&time)
+                            .context("Parsing Time Of Day Failed")?;
                     }
                 }
             }
-            Ok(())
+            let datetime_to_add: DateTime<chrono::Utc> = parsed_time.to_datetime(chrono::Utc::now());
+            
+            let new_event = Event {
+                id: get_unused_id()?,
+                kind: EventKind::Once(datetime_to_add),
+            };
 
+
+            add_to_schedule(new_event)
         },
         Commands::Cancel {cancel_next} => {
             if cancel_next {
