@@ -11,7 +11,7 @@ use anyhow::{Context, bail};
 use constcat::concat;
 use toml::value::Datetime;
 
-use crate::schedule::{Event, EventKind, add_to_schedule, check_schedule, get_unused_id, retrieve_saved_schedule};
+use crate::schedule::{Event, EventKind, add_to_schedule, clean_up_schedule, get_unused_id, retrieve_saved_schedule};
 
 
 #[derive(Parser)]
@@ -121,7 +121,7 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         },
         Commands::Temp => {
-            check_schedule()
+            clean_up_schedule()
         }
     }
 }

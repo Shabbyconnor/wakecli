@@ -68,7 +68,7 @@ pub fn retrieve_saved_schedule() -> anyhow::Result<Schedule> {
 
 }
 
-pub fn check_schedule() -> anyhow::Result<()> {
+pub fn clean_up_schedule() -> anyhow::Result<()> {
     if wakealarm_exists().is_err() {
         bail!("Cannot check schedules. Unable to confirm files exist")
     }
