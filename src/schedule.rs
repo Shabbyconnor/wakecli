@@ -1,6 +1,6 @@
-use std::io::Result;
+use std::{io::Result, ops::Add};
 use anyhow::{Context, bail};
-use chrono::{DateTime, Local, Utc, Weekday, NaiveTime};
+use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveTime, Utc, Weekday, format::Numeric::Day};
 use serde::{Serialize, Deserialize};
 use toml::from_str;
 
@@ -41,6 +41,48 @@ impl Schedule {
     }
 }
 
+impl Event {
+    fn resolve (&self, current_time: DateTime<Utc>) -> anyhow::Result<DateTime<Utc>> {
+        match &self.kind {
+            EventKind::Once(datetime) => Ok(*datetime),
+            EventKind::Weekly {days, time} => {
+                let current_weekday = current_time.weekday().num_days_from_monday();
+                let day_difference: u32 = days
+                    .iter()
+                    .map(|weekday| {
+                        let proposed_day = weekday.num_days_from_monday();
+
+                        // If the specified weekday is before the current day, move it to next week
+                        let mut day_difference = proposed_day
+                            .checked_sub(current_weekday)
+                            .unwrap_or_else(|| (proposed_day + 7) - current_weekday);
+
+                        // Add one week to weekdays before the current time.
+                        if day_difference == 0 {
+                            let proposed_time = current_time.date_naive().and_time(*time).and_utc();
+                            if proposed_time <= current_time {
+                                day_difference += 7;    
+                            }
+                        }
+
+                        day_difference
+                    })
+                    .min()
+                    .context("No minimum day found")?;
+
+                Ok(
+                    current_time.date_naive()
+                        .checked_add_days(Days::new(day_difference.into()))
+                        .context("Add days failed")?
+                        .and_time(*time)
+                        .and_utc()
+                )
+
+            }
+                
+        }
+    }
+}
 
 
 pub fn add_to_schedule(event_in: Event) -> anyhow::Result<()> {
@@ -121,4 +163,180 @@ pub fn get_unused_id() -> anyhow::Result<u64> {
         index += 1
     }
     Ok(index)
+}
+
+
+#[cfg(test)]
+mod test_resolve_event {
+    use super::*;
+    use chrono::{TimeZone, Weekday};
+
+    #[test]
+    fn once_event_returns_its_datetime() {
+        let event_time = Utc
+            .with_ymd_and_hms(2026, 8, 30, 14, 30, 0)
+            .unwrap();
+
+        let event = Event {
+            id: 1,
+            kind: EventKind::Once(event_time),
+        };
+
+        let current_time = Utc
+            .with_ymd_and_hms(2026, 8, 26, 10, 0, 0)
+            .unwrap();
+
+        assert_eq!(event.resolve(current_time).unwrap(), event_time);
+    }
+
+    #[test]
+    fn weekly_event_resolves_to_next_selected_day() {
+        // Monday, August 24, 2026.
+        let current_time = Utc
+            .with_ymd_and_hms(2026, 8, 24, 10, 0, 0)
+            .unwrap();
+
+        let event = Event {
+            id: 1,
+            kind: EventKind::Weekly {
+                days: vec![Weekday::Wed],
+                time: NaiveTime::from_hms_opt(14, 0, 0).unwrap(),
+            },
+        };
+
+        let expected = Utc
+            .with_ymd_and_hms(2026, 8, 26, 14, 0, 0)
+            .unwrap();
+
+        assert_eq!(event.resolve(current_time).unwrap(), expected);
+    }
+
+    #[test]
+    fn weekly_event_resolves_to_today_when_time_is_in_future() {
+        // Monday, August 24, 2026 at 10:00.
+        let current_time = Utc
+            .with_ymd_and_hms(2026, 8, 24, 10, 0, 0)
+            .unwrap();
+
+        let event = Event {
+            id: 1,
+            kind: EventKind::Weekly {
+                days: vec![Weekday::Mon],
+                time: NaiveTime::from_hms_opt(14, 0, 0).unwrap(),
+            },
+        };
+
+        let expected = Utc
+            .with_ymd_and_hms(2026, 8, 24, 14, 0, 0)
+            .unwrap();
+
+        assert_eq!(event.resolve(current_time).unwrap(), expected);
+    }
+
+    #[test]
+    fn weekly_event_rolls_to_next_week_when_todays_time_has_passed() {
+        // Monday, August 24, 2026 at 15:00.
+        let current_time = Utc
+            .with_ymd_and_hms(2026, 8, 24, 15, 0, 0)
+            .unwrap();
+
+        let event = Event {
+            id: 1,
+            kind: EventKind::Weekly {
+                days: vec![Weekday::Mon],
+                time: NaiveTime::from_hms_opt(14, 0, 0).unwrap(),
+            },
+        };
+
+        let expected = Utc
+            .with_ymd_and_hms(2026, 8, 31, 14, 0, 0)
+            .unwrap();
+
+        assert_eq!(event.resolve(current_time).unwrap(), expected);
+    }
+
+    #[test]
+    fn weekly_event_chooses_closest_day() {
+        // Monday, August 24, 2026.
+        let current_time = Utc
+            .with_ymd_and_hms(2026, 8, 24, 10, 0, 0)
+            .unwrap();
+
+        let event = Event {
+            id: 1,
+            kind: EventKind::Weekly {
+                days: vec![Weekday::Fri, Weekday::Wed],
+                time: NaiveTime::from_hms_opt(14, 0, 0).unwrap(),
+            },
+        };
+
+        // Wednesday is closer than Friday.
+        let expected = Utc
+            .with_ymd_and_hms(2026, 8, 26, 14, 0, 0)
+            .unwrap();
+
+        assert_eq!(event.resolve(current_time).unwrap(), expected);
+    }
+
+    #[test]
+    fn weekly_event_with_multiple_days_can_choose_next_week() {
+        // Friday, August 28, 2026.
+        let current_time = Utc
+            .with_ymd_and_hms(2026, 8, 28, 15, 0, 0)
+            .unwrap();
+
+        let event = Event {
+            id: 1,
+            kind: EventKind::Weekly {
+                days: vec![Weekday::Mon, Weekday::Fri],
+                time: NaiveTime::from_hms_opt(14, 0, 0).unwrap(),
+            },
+        };
+
+        // Friday's time has passed, so Monday is the next occurrence.
+        let expected = Utc
+            .with_ymd_and_hms(2026, 8, 31, 14, 0, 0)
+            .unwrap();
+
+        assert_eq!(event.resolve(current_time).unwrap(), expected);
+    }
+
+    #[test]
+    fn weekly_event_at_exact_current_time_rolls_to_next_week() {
+        // Monday, August 24, 2026 at exactly 14:00.
+        let current_time = Utc
+            .with_ymd_and_hms(2026, 8, 24, 14, 0, 0)
+            .unwrap();
+
+        let event = Event {
+            id: 1,
+            kind: EventKind::Weekly {
+                days: vec![Weekday::Mon],
+                time: NaiveTime::from_hms_opt(14, 0, 0).unwrap(),
+            },
+        };
+
+        let expected = Utc
+            .with_ymd_and_hms(2026, 8, 31, 14, 0, 0)
+            .unwrap();
+
+        assert_eq!(event.resolve(current_time).unwrap(), expected);
+    }
+
+    #[test]
+    fn weekly_event_with_empty_days_returns_error() {
+        let current_time = Utc
+            .with_ymd_and_hms(2026, 8, 24, 10, 0, 0)
+            .unwrap();
+
+        let event = Event {
+            id: 1,
+            kind: EventKind::Weekly {
+                days: vec![],
+                time: NaiveTime::from_hms_opt(14, 0, 0).unwrap(),
+            },
+        };
+
+        assert!(event.resolve(current_time).is_err());
+    }
 }
