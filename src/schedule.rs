@@ -2,9 +2,13 @@ use std::{io::Result, ops::Add};
 use anyhow::{Context, bail};
 use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveTime, Utc, Weekday, format::Numeric::Day};
 use serde::{Serialize, Deserialize};
-use toml::from_str;
+use toml::{Value::Datetime, from_str};
+use constcat::concat;
 
-use crate::SCHEDULES_FILE;
+
+pub const SCHEDULES_FILE: &str = concat!(STATE_DIRECTORY, "schedules.toml");
+const STATE_DIRECTORY: &str = "/var/lib/wakectl/";
+const STATE_FILE: &str = concat!(STATE_DIRECTORY, "state.toml");
 
 const WAKEALARM_PATH: &str = "/sys/class/rtc/rtc0/wakealarm";
 
@@ -14,12 +18,24 @@ pub struct Schedule {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct State {
+    pub id: u64,
+    pub event: Event,
+    pub scheduled_datetime: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Event {
     pub id: u64,
     pub kind: EventKind,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+pub struct ResolvedEvent {
+    pub id: u64,
+    pub datetime: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum EventKind {
     Once(DateTime<Utc>),
     Weekly {
@@ -42,9 +58,9 @@ impl Schedule {
 }
 
 impl Event {
-    fn resolve (&self, current_time: DateTime<Utc>) -> anyhow::Result<DateTime<Utc>> {
+    pub fn resolve (&self, current_time: DateTime<Utc>) -> anyhow::Result<ResolvedEvent> {
         match &self.kind {
-            EventKind::Once(datetime) => Ok(*datetime),
+            EventKind::Once(datetime) => Ok(ResolvedEvent { id: self.id, datetime: *datetime }),
             EventKind::Weekly {days, time} => {
                 let current_weekday = current_time.weekday().num_days_from_monday();
                 let day_difference: u32 = days
@@ -71,11 +87,14 @@ impl Event {
                     .context("No minimum day found")?;
 
                 Ok(
-                    current_time.date_naive()
-                        .checked_add_days(Days::new(day_difference.into()))
-                        .context("Add days failed")?
-                        .and_time(*time)
-                        .and_utc()
+                    ResolvedEvent { 
+                        id: self.id,
+                        datetime: current_time.date_naive()
+                            .checked_add_days(Days::new(day_difference.into()))
+                            .context("Add days failed")?
+                            .and_time(*time)
+                            .and_utc() 
+                    }
                 )
 
             }
@@ -165,6 +184,21 @@ pub fn get_unused_id() -> anyhow::Result<u64> {
     Ok(index)
 }
 
+pub fn save_state(state: &State) -> anyhow::Result<()> {
+    let state_string_conversion = toml::to_string(&state)?;
+    std::fs::write(STATE_FILE, state_string_conversion)?;
+    Ok(())
+}
+
+pub fn load_state() -> anyhow::Result<State> {
+    let state_file_contents: String = std::fs::read_to_string(SCHEDULES_FILE)
+        .context("Read state from file failed")?;
+    let retrieved_state: State = toml::from_str(&state_file_contents)
+        .context("String conversion to state failed")?;
+
+    Ok(retrieved_state)
+}
+
 
 #[cfg(test)]
 mod test_resolve_event {
@@ -186,7 +220,7 @@ mod test_resolve_event {
             .with_ymd_and_hms(2026, 8, 26, 10, 0, 0)
             .unwrap();
 
-        assert_eq!(event.resolve(current_time).unwrap(), event_time);
+        assert_eq!(event.resolve(current_time).unwrap().datetime, event_time);
     }
 
     #[test]
@@ -208,7 +242,7 @@ mod test_resolve_event {
             .with_ymd_and_hms(2026, 8, 26, 14, 0, 0)
             .unwrap();
 
-        assert_eq!(event.resolve(current_time).unwrap(), expected);
+        assert_eq!(event.resolve(current_time).unwrap().datetime, expected);
     }
 
     #[test]
@@ -230,7 +264,7 @@ mod test_resolve_event {
             .with_ymd_and_hms(2026, 8, 24, 14, 0, 0)
             .unwrap();
 
-        assert_eq!(event.resolve(current_time).unwrap(), expected);
+        assert_eq!(event.resolve(current_time).unwrap().datetime, expected);
     }
 
     #[test]
@@ -252,7 +286,7 @@ mod test_resolve_event {
             .with_ymd_and_hms(2026, 8, 31, 14, 0, 0)
             .unwrap();
 
-        assert_eq!(event.resolve(current_time).unwrap(), expected);
+        assert_eq!(event.resolve(current_time).unwrap().datetime, expected);
     }
 
     #[test]
@@ -275,7 +309,7 @@ mod test_resolve_event {
             .with_ymd_and_hms(2026, 8, 26, 14, 0, 0)
             .unwrap();
 
-        assert_eq!(event.resolve(current_time).unwrap(), expected);
+        assert_eq!(event.resolve(current_time).unwrap().datetime, expected);
     }
 
     #[test]
@@ -298,7 +332,7 @@ mod test_resolve_event {
             .with_ymd_and_hms(2026, 8, 31, 14, 0, 0)
             .unwrap();
 
-        assert_eq!(event.resolve(current_time).unwrap(), expected);
+        assert_eq!(event.resolve(current_time).unwrap().datetime, expected);
     }
 
     #[test]
@@ -320,7 +354,7 @@ mod test_resolve_event {
             .with_ymd_and_hms(2026, 8, 31, 14, 0, 0)
             .unwrap();
 
-        assert_eq!(event.resolve(current_time).unwrap(), expected);
+        assert_eq!(event.resolve(current_time).unwrap().datetime, expected);
     }
 
     #[test]

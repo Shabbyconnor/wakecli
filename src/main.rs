@@ -1,17 +1,22 @@
 mod time;
 mod schedule;
+mod commands;
 
 use std::{fmt::write, result, path::Path};
 
-use chrono::DateTime;
-use time::{ScheduleTime, parse_relative_time, parse_absolute_time, parse_time_of_day};
+use chrono::{DateTime, Utc};
+use chrono_humanize::HumanTime;
+pub use time::{ScheduleTime, parse_relative_time, parse_absolute_time, parse_time_of_day};
 use schedule::{write_to_rtc, reset_rtc_alarm};
 use clap::{Parser, Subcommand};
 use anyhow::{Context, bail};
 use constcat::concat;
 use toml::value::Datetime;
 
-use crate::schedule::{Event, EventKind, add_to_schedule, clean_up_schedule, get_unused_id, retrieve_saved_schedule};
+use crate::schedule::{Event, EventKind, ResolvedEvent, State, add_to_schedule, clean_up_schedule, get_unused_id, load_state, retrieve_saved_schedule, save_state};
+use commands::{schedule_event, cancel_event, refresh_events};
+
+
 
 
 #[derive(Parser)]
@@ -33,7 +38,7 @@ enum Commands {
         #[arg(short = 'n', long = "next")]
         cancel_next: bool
     },
-    Temp 
+    Refresh 
 }
 
 const CONFIG_FILE: &str = "/etc/wakectl.toml";
@@ -81,49 +86,13 @@ fn main() -> anyhow::Result<()> {
     
     match cli_inputs.command {
         Commands::Schedule { time, date} => {
-            let parsed_time: ScheduleTime;
-
-            match date {
-                Some(date) => {
-                    // Absolute Time - Provided Date
-                    parsed_time = parse_absolute_time(&time, &date)
-                        .context("Parsing time failed")?;
-                },
-                None => {
-                    if time.contains("+") {
-                        parsed_time = parse_relative_time(&time)
-                            .context("Parsing Relative Time Failed")?;
-                    } else {
-                        // Parse Next Occurence
-                        parsed_time = parse_time_of_day(&time)
-                            .context("Parsing Time Of Day Failed")?;
-                    }
-                }
-            }
-            let datetime_to_add: DateTime<chrono::Utc> = parsed_time.to_datetime(chrono::Utc::now());
-            
-            let new_event = Event {
-                id: get_unused_id()?,
-                kind: EventKind::Once(datetime_to_add),
-            };
-
-
-            add_to_schedule(new_event)
+            schedule_event(time, date)
         },
         Commands::Cancel {cancel_next} => {
-            if cancel_next {
-                let _ = reset_rtc_alarm().context("Write 0 to wakealarm failed");
-                //GET ALARM
-                println!("Alarm canceled");
-            } else {
-                // Show alarm options
-            }
-            Ok(())
+            cancel_event(cancel_next)
         },
-        Commands::Temp => {
-            clean_up_schedule()
+        Commands::Refresh => {
+            refresh_events()
         }
     }
 }
-
-

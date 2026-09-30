@@ -1,6 +1,5 @@
 use anyhow::{Context, bail};
-use chrono::{DateTime, Datelike, Duration, Local, MappedLocalTime, NaiveDate, NaiveTime, TimeDelta, TimeZone, Utc};
-use chrono_tz::Tz;
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveTime, TimeDelta, Utc};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ScheduleTime {
@@ -175,6 +174,7 @@ pub fn parse_absolute_time(time_in: &str, date_specified: &str) -> anyhow::Resul
 
 }
 
+// Given in the format ##am or ##pm. Default to pm
 pub fn parse_time_of_day(time_in: &str) -> anyhow::Result<ScheduleTime> {
     let (hours, minutes, seconds ) = parse_hms(time_in)?;
 
@@ -185,12 +185,11 @@ pub fn parse_time_of_day(time_in: &str) -> anyhow::Result<ScheduleTime> {
 
 }
 
-fn is_less_than_month(current_time: DateTime<Utc>, time: ScheduleTime) -> anyhow::Result<bool> {
-    if current_time > time.to_datetime(current_time) {
+pub fn is_less_than_month(current_time: DateTime<Utc>, time: DateTime<Utc>) -> anyhow::Result<bool> {
+    if current_time > time {
         bail!("Specified time cannot be before current time")
     }
-
-    Ok(time.to_datetime(current_time) <= current_time + Duration::days(31))
+    Ok(time <= current_time + Duration::days(31))
 }
 
 #[cfg(test)]
